@@ -1,0 +1,28 @@
+# Supwave (аугментер) на сервере панели Remnawave. Рядом — .env (из .env.example).
+#   docker compose up -d --build
+# Бинари OpenFlux сборка берёт из образа ноды (Dockerfile). Сеть remnawave-network
+# создаёт сама Remnawave; Caddy ходит к контейнеру как augmenter:8080.
+services:
+  augmenter:
+    build: .
+    image: supwave-augmenter:local
+    container_name: augmenter
+    hostname: augmenter
+    restart: always
+    env_file: .env
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      # SQLite: ссылки юзеров, пул аккаунтов, ноды, настройки морды
+      - augmenter-data:/data
+    networks:
+      - remnawave-network
+
+networks:
+  remnawave-network:
+    name: remnawave-network
+    external: true
+
+volumes:
+  augmenter-data:
+    name: augmenter-data

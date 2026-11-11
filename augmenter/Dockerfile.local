@@ -1,0 +1,17 @@
+# Сборка с ЛОКАЛЬНЫМИ бинарями (oflink, ofnode, openflux-node-v1.6.0 рядом) — для
+# разработки: docker compose build с dockerfile: Dockerfile.local. Обычная установка —
+# Dockerfile (бинари из образа ноды).
+FROM python:3.12-slim
+# openssh-client нужен провиженеру для PROVISION_MODE=real (SSH на ноду).
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY *.py ./
+# провиженер: сборщик ссылки (Go, linux-бинарь) + штатный node-install.sh
+# + ofnode: `ofnode secret` выдаёт ключи нодам-агентам (ofnode в Docker, как remnanode)
+COPY oflink node-install.sh openflux-node-v1.6.0 ofnode ./
+RUN chmod 0755 /app/oflink /app/node-install.sh /app/openflux-node-v1.6.0 /app/ofnode
+EXPOSE 8080
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]

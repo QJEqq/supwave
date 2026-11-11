@@ -1,0 +1,23 @@
+# Нода OpenFlux (агент ofnode), как у remnanode. Обычно этот файл с готовым
+# SECRET_KEY выдаёт веб-морда («Ноды → Добавить ноду») — копировать отсюда не нужно.
+# На ноде: /opt/openflux-node/docker-compose.yml, затем `docker compose up -d`.
+# Файрвол: открыть ТОЛЬКО API агента и только для IP панели (портов для клиентов нет):
+#   ufw allow from <IP панели> to any port 2223 proto tcp
+services:
+  openflux-node:
+    image: ${OPENFLUX_NODE_IMAGE:-trueheck/openflux-node:latest}
+    container_name: openflux-node
+    restart: always
+    # l3-выход отвечает клиентам сырыми сокетами с адреса хоста.
+    network_mode: host
+    cap_add: [NET_RAW, NET_ADMIN]
+    environment:
+      NODE_PORT: "2223"
+      PORT_RANGE: "20000-29999"
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY выдаёт веб-морда}"
+    volumes:
+      - openflux-node-data:/var/lib/openflux-node
+
+volumes:
+  openflux-node-data:
+    name: openflux-node-data

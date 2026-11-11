@@ -1,0 +1,27 @@
+# Не этот репозиторий: клиентская часть (Pod, мобильное ядро, Xray)
+/pod/
+/mobile-core/
+/xray/
+
+# Секреты и данные — никогда в гит
+.env
+*.db
+*.sqlite*
+*.key
+*.pem
+cookies*.txt
+*-cookies.txt
+
+# Бинари OpenFlux: лежат в образе ноды, собираются из форка (README → «Из исходников»)
+/augmenter/openflux-node-v1.6.0
+/augmenter/oflink
+/augmenter/ofnode
+/node-kit/openflux
+/node-kit/ofnode
+/node-kit/oflink
+
+# Мусор
+__pycache__/
+*.pyc
+.DS_Store
+.claude/

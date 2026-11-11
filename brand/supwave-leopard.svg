@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="1024" height="1024">
+<defs>
+<linearGradient id="fur" gradientUnits="userSpaceOnUse" x1="0" y1="16" x2="0" y2="112">
+<stop offset="0" stop-color="#1b57c9"/>
+<stop offset="1" stop-color="#46c4ef"/>
+</linearGradient>
+</defs>
+<path fill="url(#fur)" d="M19 54 Q14 26 26 19 Q34 15 54 33 Z"/>
+<path fill="url(#fur)" d="M109 54 Q114 26 102 19 Q94 15 74 33 Z"/>
+<path fill="#0e3a82" fill-opacity=".3" d="M24 46 Q22 30 29 26 Q34 24 44 34 Z"/>
+<path fill="#0e3a82" fill-opacity=".3" d="M104 46 Q106 30 99 26 Q94 24 84 34 Z"/>
+<path fill="url(#fur)" d="M64 28 C86 28 101 36 105 52 C108 63 111 71 115.5 79.5 C112 82 110.5 85 109 89 C101 104 83 110 64 110 C45 110 27 104 19 89 C17.5 85 16 82 12.5 79.5 C17 71 20 63 23 52 C27 36 42 28 64 28 Z"/>
+<g fill="#0e3a82" fill-opacity=".32">
+<circle cx="64" cy="38" r="3"/><circle cx="56" cy="43.5" r="2.4"/><circle cx="72" cy="43.5" r="2.4"/>
+<circle cx="64" cy="48" r="1.9"/><circle cx="49" cy="37" r="1.8"/><circle cx="79" cy="37" r="1.8"/>
+</g>
+<g fill="none" stroke="#0e3a82" stroke-opacity=".32" stroke-width="2.3" stroke-linecap="round">
+<circle cx="26" cy="74" r="4.4" stroke-dasharray="20 8"/>
+<circle cx="102" cy="74" r="4.4" stroke-dasharray="20 8" transform="rotate(180 102 74)"/>
+<circle cx="32" cy="90" r="3" stroke-dasharray="13 6"/>
+<circle cx="96" cy="90" r="3" stroke-dasharray="13 6" transform="rotate(180 96 90)"/>
+</g>
+<ellipse cx="45" cy="63" rx="12.5" ry="10.5" fill="#fff" transform="rotate(16 45 63)"/>
+<ellipse cx="83" cy="63" rx="12.5" ry="10.5" fill="#fff" transform="rotate(-16 83 63)"/>
+<ellipse cx="46" cy="63.5" rx="4.8" ry="7.6" fill="#0b2e6b"/>
+<ellipse cx="82" cy="63.5" rx="4.8" ry="7.6" fill="#0b2e6b"/>
+<circle cx="44.6" cy="60" r="1.7" fill="#fff"/><circle cx="80.6" cy="60" r="1.7" fill="#fff"/>
+<circle cx="57" cy="90" r="8.6" fill="#eaf8ff"/>
+<circle cx="71" cy="90" r="8.6" fill="#eaf8ff"/>
+<path fill="#0b2e6b" d="M58 82 C60.5 80.4 67.5 80.4 70 82 C69 85.4 66.4 87.8 64 88.2 C61.6 87.8 59 85.4 58 82 Z"/>
+<path fill="none" stroke="#0b2e6b" stroke-width="1.6" stroke-linecap="round" d="M64 88.2 V91 M64 91 Q61.2 94 58.4 92.2 M64 91 Q66.8 94 69.6 92.2"/>
+<g fill="#0b2e6b" fill-opacity=".45">
+<circle cx="52.5" cy="89" r="1"/><circle cx="55" cy="93.2" r="1"/><circle cx="51.2" cy="93.6" r="1"/>
+<circle cx="75.5" cy="89" r="1"/><circle cx="73" cy="93.2" r="1"/><circle cx="76.8" cy="93.6" r="1"/>
+</g>
+</svg>
