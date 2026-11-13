@@ -528,13 +528,19 @@ if ADMIN_TOKEN:
         return Response(status_code=307, headers={"Location": _UI_PATH})
 
 
-@app.get("/{path:path}")
+# Сканеры долбят /.env, /.git/config, /wp-login.php, *.php — таких путей у страницы
+# подписки нет: сразу 404, не дёргая апстрим.
+_JUNK = re.compile(r"(\.|wp-)|.*\.php$", re.IGNORECASE)
+
+
+@app.api_route("/{path:path}", methods=["GET", "HEAD"])
 async def serve(path: str, request: Request):
+    """Всё, что не админка, — к странице подписки Remnawave, как было до аугментера
+    (её статика /assets, /favicon.ico… тоже). openflux дописывается только в ответ
+    на путь подписки /<shortUuid> и только клиентам с меткой в User-Agent."""
     short_uuid = path.split("/", 1)[0]
-    # Боты постоянно долбят /.git/config, /wp-login.php, /favicon.ico и т.п. —
-    # настоящий путь подписки это shortUuid (base64url). Что на него не похоже —
-    # сразу 404: не ходим к апстриму и не плодим 500+трейсбек в логах.
-    if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", short_uuid):
+    is_sub = bool(re.fullmatch(r"[A-Za-z0-9_-]{8,64}", short_uuid))
+    if not is_sub and _JUNK.match(path):
         return Response(status_code=404)
     # UA-гейт ЗДЕСЬ, а не в Caddy: openflux дописываем только Pod'у, прочим —
     # тело апстрима как есть (зеро-вмешательство для чужих клиентов).
@@ -545,8 +551,8 @@ async def serve(path: str, request: Request):
     headers["accept-encoding"] = "identity"  # без gzip — чтобы не разжимать тело
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            up = await client.get(
-                f"{UPSTREAM}/{path}",
+            up = await client.request(
+                request.method, f"{UPSTREAM}/{path}",
                 params=dict(request.query_params),
                 headers=headers,
                 follow_redirects=True,
@@ -556,7 +562,7 @@ async def serve(path: str, request: Request):
         return Response(content=b"upstream unavailable", status_code=502)
 
     body = up.content
-    if is_pod and up.status_code == 200:
+    if is_sub and is_pod and up.status_code == 200:
         link = store.get(short_uuid) or FALLBACK  # пер-юзер из склада, иначе общий (MVP)
         link = _named(link, short_uuid) if link else link
         if link:
