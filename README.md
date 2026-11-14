@@ -73,17 +73,27 @@ docker compose up -d --build
 
 ### 2. Caddy
 
-В `Caddyfile`: домен подписки целиком — в Supwave, на домене панели — один маршрут
-`/augmenter*` (имя контейнера Remnawave и порт — как у тебя):
+В `Caddyfile`: на домене подписки через Supwave идут только клиенты с меткой, остальные —
+прямо к странице подписки, как без Supwave; на домене панели — один маршрут `/augmenter*`
+(имя контейнера Remnawave и порт — как у тебя):
 
 ```
 https://subs.example.com {
     encode
-    # Supwave первым; упал — Caddy сам отдаёт обычную подписку Remnawave (без openflux)
-    reverse_proxy http://augmenter:8080 http://remnawave-subscription-page:3010 {
-        lb_policy first
-        lb_try_duration 3s
-        fail_duration 30s
+    # Через Supwave — только клиенты с меткой из «Настроек → Клиенты». Happ, браузер и
+    # прочие идут прямо к странице подписки: Supwave им ничего не дописывает, и любая его
+    # беда их не касается.
+    @supwave header_regexp User-Agent (AVACA-Pod|Rawline)
+    handle @supwave {
+        # Supwave упал — Caddy сам отдаёт обычную подписку Remnawave (без openflux)
+        reverse_proxy http://augmenter:8080 http://remnawave-subscription-page:3010 {
+            lb_policy first
+            lb_try_duration 3s
+            fail_duration 30s
+        }
+    }
+    handle {
+        reverse_proxy http://remnawave-subscription-page:3010
     }
 }
 
@@ -99,6 +109,8 @@ https://panel.example.com {
 ```bash
 docker exec caddy caddy validate --config /etc/caddy/Caddyfile && docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
+
+Добавишь клиента в «Настройках» — допиши его метку и в `header_regexp` (через `|`).
 
 ### 3. Веб-морда
 

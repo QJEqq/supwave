@@ -58,10 +58,16 @@ ADMIN_PREFIX = "/" + (os.getenv("ADMIN_PREFIX", "/admin").strip().strip("/") or 
 ADMIN_HOSTS = {h.strip().lower() for h in os.getenv("ADMIN_HOSTS", "").split(",") if h.strip()}
 _LOOPBACK = {"127.0.0.1", "localhost", "[::1]"}
 
-# заголовки ОТВЕТА, которые не отдаём как есть (длину/кодировку пересчитает сервер).
-_DROP = {"content-length", "content-encoding", "transfer-encoding", "connection", "content-type"}
-# заголовки ЗАПРОСА наверх: UA решает формат в Remnawave, x-forwarded-* — для IP-логов.
-_FWD = ("user-agent", "accept", "x-forwarded-for", "x-real-ip", "x-forwarded-proto", "x-forwarded-host")
+# Страница подписки — за прозрачным прокси (serve): наверх уходит всё, кроме hop-by-hop
+# (RFC 9110 §7.6.1) и того, что httpx выставит сам (host, длина), а accept-encoding
+# заменяем на identity — тело должно прийти несжатым, чтобы в него можно было дописать.
+_HOP_REQUEST = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-authorization", b"te",
+                b"trailer", b"transfer-encoding", b"upgrade", b"host", b"content-length", b"accept-encoding"}
+# В ответе: hop-by-hop и content-encoding (httpx уже разжал тело, если апстрим сжал вопреки identity).
+_HOP_RESPONSE = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-authorization", b"te",
+                 b"trailer", b"transfer-encoding", b"upgrade", b"content-encoding"}
+_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+_MAX_BODY = 1 << 20  # странице подписки нечего принимать больше мегабайта
 
 
 @asynccontextmanager
@@ -533,11 +539,17 @@ if ADMIN_TOKEN:
 _JUNK = re.compile(r"(\.|wp-)|.*\.php$", re.IGNORECASE)
 
 
-@app.api_route("/{path:path}", methods=["GET", "HEAD"])
+@app.api_route("/{path:path}", methods=_METHODS)
 async def serve(path: str, request: Request):
-    """Всё, что не админка, — к странице подписки Remnawave, как было до аугментера
-    (её статика /assets, /favicon.ico… тоже). openflux дописывается только в ответ
-    на путь подписки /<shortUuid> и только клиентам с меткой в User-Agent."""
+    """Всё, что не админка, — к странице подписки Remnawave, как было до аугментера:
+    любой метод, все заголовки клиента, редиректы и заголовки ответа — как есть.
+    openflux дописывается только в ответ на GET /<shortUuid> клиентам с меткой в UA.
+
+    Прозрачность — не украшение. Remnawave читает не только User-Agent: по x-hwid и
+    x-device-* считает лимит устройств, и подписка юзера с лимитом без них приходит
+    пустой — на любом устройстве и в любом клиенте. Страница в браузере ходит за
+    данными не только GET'ом. Заголовок ответа с UTF-8 при пересборке через Starlette
+    (latin-1) ронял ответ в 500. Всё это раньше и ломалось."""
     short_uuid = path.split("/", 1)[0]
     is_sub = bool(re.fullmatch(r"[A-Za-z0-9_-]{8,64}", short_uuid))
     if not is_sub and _JUNK.match(path):
@@ -547,30 +559,58 @@ async def serve(path: str, request: Request):
     ua = request.headers.get("user-agent", "")
     is_pod = any(m in ua for m in settings.ua_markers())
 
-    headers = {h: request.headers[h] for h in _FWD if h in request.headers}
-    headers["accept-encoding"] = "identity"  # без gzip — чтобы не разжимать тело
+    # Наверх — всё, что прислал клиент, кроме hop-by-hop и того, что httpx ставит сам.
+    headers = [(k, v) for k, v in request.headers.raw if k.lower() not in _HOP_REQUEST]
+    headers.append((b"accept-encoding", b"identity"))  # без gzip — чтобы не разжимать тело
+    content = None
+    if request.method not in ("GET", "HEAD"):
+        content = await _read_body(request)
+        if content is None:
+            return Response(status_code=413)
+    # Путь и query — сырыми, как пришли: повторы ключей и %-кодировка не теряются.
+    target = UPSTREAM + (request.scope.get("raw_path") or f"/{path}".encode()).decode("latin-1")
+    if request.url.query:
+        target += "?" + request.url.query
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            up = await client.request(
-                request.method, f"{UPSTREAM}/{path}",
-                params=dict(request.query_params),
-                headers=headers,
-                follow_redirects=True,
-            )
+            up = await client.request(request.method, target, headers=headers, content=content,
+                                      follow_redirects=False)
     except httpx.TransportError:
         # апстрим (sub-page) оборвал соединение / не ответил — чистый 502 без трейсбека
         return Response(content=b"upstream unavailable", status_code=502)
 
     body = up.content
-    if is_sub and is_pod and up.status_code == 200:
+    if request.method == "GET" and is_sub and is_pod and up.status_code == 200:
         link = store.get(short_uuid) or FALLBACK  # пер-юзер из склада, иначе общий (MVP)
         link = _named(link, short_uuid) if link else link
         if link:
             body = _inject(body, link)
 
-    out = {k: v for k, v in up.headers.items() if k.lower() not in _DROP}
-    return Response(content=body, status_code=up.status_code, headers=out,
-                    media_type=up.headers.get("content-type"))
+    # Заголовки ответа — сырыми байтами: каждый повтор (Set-Cookie) на месте и ничего не
+    # перекодируется. Длину считаем заново (тело могло вырасти на строку openflux),
+    # у HEAD — оставляем апстримную: тела нет, а длина должна быть как у GET.
+    response = Response(content=b"" if request.method == "HEAD" else body, status_code=up.status_code)
+    keep_length = request.method == "HEAD"
+    raw = [(k.lower(), v) for k, v in up.headers.raw
+           if k.lower() not in _HOP_RESPONSE and (keep_length or k.lower() != b"content-length")]
+    if not keep_length and not (100 <= up.status_code < 200 or up.status_code in (204, 304)):
+        raw.append((b"content-length", str(len(body)).encode()))
+    response.raw_headers = raw
+    return response
+
+
+async def _read_body(request: Request) -> bytes | None:
+    """Тело запроса к странице подписки, не больше _MAX_BODY; больше — None (413)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _MAX_BODY:
+        return None
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > _MAX_BODY:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 _LINK_PREFIX = "openflux://v1/"
