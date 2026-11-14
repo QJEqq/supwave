@@ -648,6 +648,8 @@ def _inject(body: bytes, line: str) -> bytes:
     """Дописать openflux-строку. Remnawave для клиентских UA отдаёт base64(список
     ссылок). Другой формат / не наш — отдаём как есть, ничего не ломаем."""
     text = body.decode("utf-8", "ignore").strip()
+    if text[:1] in ("[", "{"):
+        return _inject_json(body, text, line)
     if "://" in text:
         return (text + "\n" + line).encode()
     try:
@@ -658,3 +660,19 @@ def _inject(body: bytes, line: str) -> bytes:
         return body
     decoded = decoded.rstrip("\n") + "\n" + line + "\n"
     return base64.b64encode(decoded.encode()).decode().encode()
+
+
+def _inject_json(body: bytes, text: str, line: str) -> bytes:
+    """JSON-документы Xray (формат XRAY_JSON, и `/<uuid>/json`): строка после JSON
+    ломала разбор всего ответа — в документах тоже есть «://» (DoH, пути), и старая
+    проверка принимала их за список ссылок. В массив документов ссылка ложится
+    отдельным элементом-строкой: Avaca читает её как share-ссылку, ядро Xray её не
+    видит. Одиночный документ — без вставки: ссылке в нём некуда встать."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return body
+    if not isinstance(doc, list):
+        return body
+    doc.append(line)
+    return json.dumps(doc, ensure_ascii=False, indent=2).encode()
