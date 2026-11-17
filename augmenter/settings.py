@@ -1,7 +1,8 @@
 """Настройки, которые меняются из веб-морды (без правки .env и пересборки): кому
-положен openflux (сквады Remnawave), имя openflux-ссылки в подписке и клиенты
-(метки User-Agent), которым её дописывать. Лежат в той же SQLite, что и склад
-(/data/links.db). Пока в морде не заданы — берутся из .env.
+положен openflux (сквады Remnawave), имя openflux-ссылки в подписке, клиенты
+(метки User-Agent), которым её дописывать, и носители каналов (по умолчанию и свои
+у отдельного канала). Лежат в той же SQLite, что и склад (/data/links.db). Пока в
+морде не заданы — берутся из .env.
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ _DB = os.getenv("STORE_PATH", "/data/links.db")
 _lock = threading.Lock()
 _conn = sqlite3.connect(_DB, check_same_thread=False)
 _conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+# свои носители отдельного канала (поверх носителей по умолчанию)
+_conn.execute("CREATE TABLE IF NOT EXISTS channel_carriers (short_uuid TEXT PRIMARY KEY, carriers TEXT NOT NULL)")
 _conn.commit()
 _cache: dict = {}  # пишет только этот процесс — кэш не протухает
 
@@ -23,6 +26,23 @@ ENV_LINK_NAME = os.getenv("OPENFLUX_LINK_NAME", "").strip()
 # Метки клиентов: openflux дописывается, только если User-Agent содержит одну из них.
 # По умолчанию — Avaca: её User-Agent «Avaca/… (Android …) AVACA-Pod».
 ENV_UA = [m.strip() for m in os.getenv("POD_UA_MARKER", "AVACA-Pod").split(",") if m.strip()]
+
+# Носители, которые канал может везти (direct — отдельно, OPENFLUX_DIRECT). Доска и
+# волга — на аккаунте Яндекса из пула; комнаты cups.online и Авито — анонимные,
+# аккаунт им не нужен. Порядок здесь — порядок показа и записи.
+CARRIERS = ("boards", "vyandex", "cupsonline", "avito")
+
+
+def clean_carriers(raw) -> list[str]:
+    """Известные носители из raw — в порядке CARRIERS, без повторов."""
+    got = set(raw or [])
+    return [c for c in CARRIERS if c in got]
+
+
+# Носители новых каналов, пока в морде не выбраны: OPENFLUX_CARRIERS (по умолчанию —
+# доска + волга, как было до cups и Авито).
+ENV_CARRIERS = clean_carriers(c.strip() for c in os.getenv("OPENFLUX_CARRIERS", "boards,vyandex").split(",")) \
+    or ["boards", "vyandex"]
 
 
 def _get(key: str):
@@ -77,3 +97,47 @@ def ua_markers() -> list[str]:
 
 def set_ua_markers(markers: list[str]) -> None:
     _put("ua_markers", markers)
+
+
+def carriers() -> dict:
+    """Носители канала по умолчанию: {"carriers": [...], "from": panel | env}."""
+    v = _get("carriers")
+    if isinstance(v, list):
+        return {"carriers": clean_carriers(v), "from": "panel"}
+    return {"carriers": list(ENV_CARRIERS), "from": "env"}
+
+
+def set_carriers(carriers_: list[str]) -> None:
+    _put("carriers", clean_carriers(carriers_))
+
+
+def channel_carriers(short_uuid: str) -> list[str] | None:
+    """Свои носители канала; None — канал берёт носители по умолчанию."""
+    with _lock:
+        row = _conn.execute("SELECT carriers FROM channel_carriers WHERE short_uuid=?", (short_uuid,)).fetchone()
+    return clean_carriers(json.loads(row[0])) if row else None
+
+
+def set_channel_carriers(short_uuid: str, carriers_: list[str] | None) -> None:
+    """Задать каналу свои носители; None — вернуть ему носители по умолчанию."""
+    with _lock:
+        if carriers_ is None:
+            _conn.execute("DELETE FROM channel_carriers WHERE short_uuid=?", (short_uuid,))
+        else:
+            _conn.execute("INSERT INTO channel_carriers(short_uuid, carriers) VALUES(?,?) "
+                          "ON CONFLICT(short_uuid) DO UPDATE SET carriers=excluded.carriers",
+                          (short_uuid, json.dumps(clean_carriers(carriers_))))
+        _conn.commit()
+
+
+def channel_overrides() -> dict[str, list[str]]:
+    """{shortUuid: носители} — каналы со своими носителями."""
+    with _lock:
+        rows = _conn.execute("SELECT short_uuid, carriers FROM channel_carriers").fetchall()
+    return {su: clean_carriers(json.loads(v)) for su, v in rows}
+
+
+def carriers_for(short_uuid: str) -> list[str]:
+    """Что заводить каналу: свои носители, иначе — по умолчанию."""
+    own = channel_carriers(short_uuid)
+    return own if own is not None else carriers()["carriers"]

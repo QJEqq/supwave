@@ -278,7 +278,7 @@ pick_port() {
 CHANNEL=""; URL=""; YANDEX=""; MAILRU=""; BOARDS=""; CUPS=""; KEY=""; PORT=""; COOKIES=""; AUTOUPDATE=""; MODE=""
 TELEMOST=""; AVITO=""; SCRIPTS=""
 # AVACA: carrier priorities from the companion (priority_<type>=N); empty keeps the defaults below.
-PRIO_VYANDEX=""; PRIO_BOARDS=""; PRIO_DIRECT=""
+PRIO_VYANDEX=""; PRIO_BOARDS=""; PRIO_DIRECT=""; PRIO_AVITO=""; PRIO_CUPS=""
 NL='
 '
 
@@ -310,6 +310,8 @@ read_config() {
             priority_vyandex=*) PRIO_VYANDEX=${line#priority_vyandex=} ;;
             priority_boards=*) PRIO_BOARDS=${line#priority_boards=} ;;
             priority_direct=*) PRIO_DIRECT=${line#priority_direct=} ;;
+            priority_avito=*) PRIO_AVITO=${line#priority_avito=} ;;
+            priority_cupsonline=*) PRIO_CUPS=${line#priority_cupsonline=} ;;
             "") ;;
             *) fail input "неизвестная строка конфигурации" ;;
         esac
@@ -355,7 +357,7 @@ check_transports() {
     [ -z "$COOKIES" ] || [ -n "$URL" ] || [ -n "$YANDEX" ] || fail input "вход в Яндекс нужен только каналу с документом Яндекса"
     case "$AUTOUPDATE" in ""|yes|no) ;; *) fail input "autoupdate: yes или no" ;; esac
     case "$MODE" in ""|l4|l3) ;; *) fail input "режим ноды: l4 или l3" ;; esac
-    for prio in "$PRIO_VYANDEX" "$PRIO_BOARDS" "$PRIO_DIRECT"; do
+    for prio in "$PRIO_VYANDEX" "$PRIO_BOARDS" "$PRIO_DIRECT" "$PRIO_AVITO" "$PRIO_CUPS"; do
         [ -z "$prio" ] || printf '%s' "$prio" | grep -Eq '^[0-9]{1,3}$' || fail input "приоритет транспорта: целое 0-999"
     done
 }
@@ -800,8 +802,8 @@ EOF
     [ -n "$MAILRU" ] && printf '\n[Transport mailru]\nType = mailru\nPriority = 90\nURL = %s\n' "$MAILRU"
     [ -n "$TELEMOST" ] && printf '\n[Transport telemost]\nType = telemost\nPriority = 85\nURL = %s\n' "$TELEMOST"
     [ -n "$BOARDS" ] && printf '\n[Transport boards]\nType = boards\nPriority = %s\nURL = %s\n' "${PRIO_BOARDS:-80}" "$BOARDS"
-    [ -n "$AVITO" ] && printf '\n[Transport avito]\nType = avito\nPriority = 75\nURL = %s\n' "$AVITO"
-    [ -n "$CUPS" ] && printf '\n[Transport cupsonline]\nType = cupsonline\nPriority = 70\nURL = %s\n' "$CUPS"
+    [ -n "$AVITO" ] && printf '\n[Transport avito]\nType = avito\nPriority = %s\nURL = %s\n' "${PRIO_AVITO:-75}" "$AVITO"
+    [ -n "$CUPS" ] && printf '\n[Transport cupsonline]\nType = cupsonline\nPriority = %s\nURL = %s\n' "${PRIO_CUPS:-70}" "$CUPS"
     write_script_sections
     printf '\n[Transport direct]\nType = direct\nPriority = %s\nListen = 0.0.0.0:%s\n' "${PRIO_DIRECT:-50}" "$PORT"
 }

@@ -27,6 +27,7 @@ from asyncio.subprocess import PIPE
 import accounts
 import nodeapi
 import nodes
+import settings
 
 STUB = os.getenv("PROVISION_MODE", "stub") == "stub"
 
@@ -59,11 +60,13 @@ NODE_MODE = os.getenv("OPENFLUX_NODE_MODE", "l3")
 
 # Приоритеты носителей канала. Сессия шлёт весь трафик через ЖИВОЙ носитель с
 # наивысшим приоритетом (скорость не учитывается), так что порядок решает, кто
-# везёт: direct, пока доходит → доска, когда direct режут (белые списки) → волга,
-# если отвалится и доска. Одни и те же числа уходят И в node.conf экзита
-# (priority_<тип>= в копии node-install.sh), И в ссылку клиента (oflink
-# --priorities) — стороны совпадают.
-PRIORITY_TYPES = ("direct", "boards", "vyandex")  # что понимает копия node-install.sh
+# везёт: direct, пока доходит → доска → cups.online → Авито → волга. По замерам
+# (2026-11-17): доска ~80 КБ/с, cups ~70 КБ/с (лимит cups.online — на адрес ноды,
+# общий для её каналов), Авито ~24 КБ/с, волга 4–6 КБ/с. Одни и те же числа уходят
+# И в node.conf экзита (priority_<тип>= в копии node-install.sh / агенту), И в
+# ссылку клиента (oflink --priorities) — стороны совпадают.
+PRIORITY_TYPES = ("direct", "boards", "cupsonline", "avito", "vyandex")  # что понимает копия node-install.sh
+DEFAULT_PRIORITIES = {"direct": 100, "boards": 70, "cupsonline": 60, "avito": 55, "vyandex": 50}
 
 # direct = прямой TCP на порт ноды. По умолчанию ВЫКЛЮЧЕН: на каждый канал — свой
 # открытый нестандартный порт, а много таких портов сразу выдают ноду ТСПУ. Без
@@ -74,10 +77,12 @@ DIRECT = os.getenv("OPENFLUX_DIRECT", "off").strip().lower() in ("on", "1", "yes
 
 
 def _priorities() -> dict:
-    """OPENFLUX_PRIORITIES → {тип: число}. Читаем при каждом провижне: кривое
-    значение роняет только провижн (с внятной ошибкой), а не раздачу подписки."""
-    raw = os.getenv("OPENFLUX_PRIORITIES", "direct:100,boards:70,vyandex:50")
-    out = {}
+    """DEFAULT_PRIORITIES поверх — OPENFLUX_PRIORITIES → {тип: число}. Тип, которого
+    нет в env, берёт число отсюда (иначе ядро и oflink подставили бы свои умолчания,
+    где Авито выше доски). Читаем при каждом провижне: кривое значение роняет только
+    провижн (с внятной ошибкой), а не раздачу подписки."""
+    raw = os.getenv("OPENFLUX_PRIORITIES", "")
+    out = dict(DEFAULT_PRIORITIES)
     for part in raw.replace(" ", "").split(","):
         if not part:
             continue
@@ -122,10 +127,11 @@ def _channel(short_uuid: str) -> str:
     return "u" + hashlib.sha1(short_uuid.encode()).hexdigest()[:16]
 
 
-# Канал = ТОЛЬКО boards + volga (vyandex) + direct. Доску и док провиженер создаёт
-# пер-юзер на аккаунтах пула; env ниже — фоллбэк, когда пул пуст (одна общая доска/
-# док на все каналы). Читаем ЛЕНИВО (не при импорте): контейнер мог стартовать
-# раньше, чем проставили env.
+# Канал = выбранные в морде носители (settings.carriers_for): boards + volga
+# (vyandex) на аккаунте пула, комнаты cups.online и Авито (анонимно), + direct.
+# Доску и док провиженер создаёт пер-юзер на аккаунтах пула; env ниже — фоллбэк,
+# когда пул пуст (одна общая доска/док на все каналы). Читаем ЛЕНИВО (не при
+# импорте): контейнер мог стартовать раньше, чем проставили env.
 def _doc_transports() -> list:
     """Общие доска/volga-док из env: OPENFLUX_BOARDS_DOC / OPENFLUX_VOLGA_DOC."""
     out = []
@@ -321,6 +327,9 @@ def _volga_url(url: str) -> str:
     return url.rstrip("/") + "?source=docs"
 
 
+# Упакованный список комнат cups.online / Авито — как valid_rooms в node-install.sh.
+_ROOMS_OK = re.compile(r"[A-Za-z0-9_-]{8,4096}")
+
 # Те же регэкспы, что valid_boards / valid_url в node-install.sh.
 _DOC_OK = {
     "boards": re.compile(r"https://boards\.yandex\.ru/whiteboard/\?hash=[0-9a-f]{32}"),
@@ -370,9 +379,35 @@ async def _make_doc(method: str, cookies: str, name: str = "") -> str:
     params: dict = {"cookies": cookies}
     if name:
         params["name"] = name
+    return await _wizard(method, params, "url")
+
+
+# Пар комнат Авито на канал (полос: tx + rx). Авито пускает 10 WebSocket-рукопожатий
+# в минуту на адрес, и все каналы ноды делят этот лимит: 4 пары = 8 сокетов на
+# конец — подъём за ~1 мин, а не за 2,5 (8 пар по умолчанию ядра).
+def _avito_pairs() -> int:
+    raw = os.getenv("OPENFLUX_AVITO_ROOMS", "").strip()
+    return max(1, min(8, int(raw))) if raw.isdigit() else 4
+
+
+AVITO_PAIRS = _avito_pairs()
+
+
+async def _make_rooms(typ: str) -> str:
+    """Комнаты cups.online / Авито под канал — анонимно, визардом ядра; ответ —
+    упакованный список комнат (URL носителя в node.conf и ссылке). "" на ошибке."""
+    if typ == "avito":
+        return await _wizard("createAvitoRooms", {}, "rooms", {"AVITO_ROOMS": str(AVITO_PAIRS)})
+    return await _wizard("createRooms", {}, "rooms")
+
+
+async def _wizard(method: str, params: dict, field: str, env: dict | None = None) -> str:
+    """Один запрос к core --node-wizard → значение поля field ответа ("" на ошибке).
+    Секреты (куки) — только в params, через stdin."""
     req = (json.dumps({"id": 1, "method": method, "params": params}) + "\n").encode()
     proc = await asyncio.create_subprocess_exec(
         CORE_LOCAL, "--node-wizard", stdin=PIPE, stdout=PIPE, stderr=PIPE,
+        env={**os.environ, **env} if env else None,
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(req), timeout=WIZARD_TIMEOUT)
@@ -389,9 +424,11 @@ async def _make_doc(method: str, cookies: str, name: str = "") -> str:
             continue
         if not isinstance(data, dict):
             continue
-        if data.get("ok") and data.get("url"):
-            print(f"[provision] {method}: {data['url']}", flush=True)
-            return data["url"]
+        if data.get("ok") and data.get(field):
+            got = data[field]
+            # список комнат длинный (до 4 КБ) — в лог хватит начала
+            print(f"[provision] {method}: {got if field == 'url' else got[:16] + f'… ({len(got)} симв.)'}", flush=True)
+            return got
         print(f"[provision] {method}: не вышло — {data.get('error') or raw.strip()}", flush=True)
         return ""
     # ни одной JSON-строки: визард упал / не тот бинарь — покажем хвост stderr
@@ -489,8 +526,7 @@ async def _provision_real(short_uuid: str) -> str:
     channel = _channel(short_uuid)
     key = secrets.token_hex(32)
     prios = _priorities()  # кривой OPENFLUX_PRIORITIES — падаем сразу, ничего не создав
-    if not DIRECT:
-        prios.pop("direct", None)  # direct в канале нет — и приоритет ему не нужен
+    want = settings.carriers_for(short_uuid)  # носители из морды: свои у канала или по умолчанию
 
     # 1) Нода — ДО того, как создавать доску и док на аккаунте оператора (reconcile
     #    повторяет заход каждые RECONCILE_INTERVAL, и каждый провал на ноде оставлял
@@ -513,43 +549,58 @@ async def _provision_real(short_uuid: str) -> str:
         await _upload_installer(node)
         await _plan_fresh(node, channel)
 
-    # 2) Транспорты канала: ТОЛЬКО boards + volga (vyandex); direct добавят
+    # 2) Носители канала — что выбрано в морде (want); direct добавят агент /
     #    node-install.sh и oflink сами. Доску и док создаём на самом ненагруженном
-    #    healthy-аккаунте пула (создание требует вход). Пул пуст → общие доска/док
-    #    из env. Best-effort: что не создалось — в канал не идёт, он живёт на direct.
+    #    healthy-аккаунте пула (создание требует вход; аккаунт берём, только если
+    #    выбран носитель Яндекса). Пул пуст → общие доска/док из env. Комнаты
+    #    cups.online и Авито — анонимно, визардом ядра. Best-effort: что не
+    #    создалось — в канал не идёт.
     transports: list = []
     cookies = ""
-    acc = accounts.pick()
-    if acc is None:
-        print("[provision] пул аккаунтов пуст (или все на потолке / нездоровы) — доску и волгу не создаю, беру env", flush=True)
-    else:
-        board_url = await _make_doc("createBoard", acc.cookies)
-        if _doc_ok("boards", board_url):
-            transports.append({"type": "boards", "url": board_url})
-        volga_url = _volga_url(await _make_doc("createVolgaDoc", acc.cookies))
-        if _doc_ok("vyandex", volga_url):
-            transports.append({"type": "vyandex", "url": volga_url})
-            # куки нужны только volga-экзиту (входит по URL дока); boards — гостем
-            cookies = _rekey_cookies(acc.cookies, volga_url)
-        if transports:
-            accounts.bind(short_uuid, acc.id)
+    acc = None
+    if "boards" in want or "vyandex" in want:
+        acc = accounts.pick()
+        if acc is None:
+            print("[provision] пул аккаунтов пуст (или все на потолке / нездоровы) — доску и волгу не создаю, беру env", flush=True)
         else:
-            accounts.release(acc.id)  # ничего не создалось — вернём ёмкость
-            acc = None
-    if acc is None:
-        for t in _doc_transports():
-            if not _doc_ok(t["type"], t["url"]):
-                continue
-            transports.append(t)
-            if t["type"] == "vyandex" and _yandex_cookies():
-                try:
-                    cookies = _rekey_cookies(_yandex_cookies(), t["url"])
-                except ValueError:
-                    print("[provision] OPENFLUX_YANDEX_COOKIES — не base64 cookie-store, volga без входа", flush=True)
+            if "boards" in want:
+                board_url = await _make_doc("createBoard", acc.cookies)
+                if _doc_ok("boards", board_url):
+                    transports.append({"type": "boards", "url": board_url})
+            if "vyandex" in want:
+                volga_url = _volga_url(await _make_doc("createVolgaDoc", acc.cookies))
+                if _doc_ok("vyandex", volga_url):
+                    transports.append({"type": "vyandex", "url": volga_url})
+                    # куки нужны только volga-экзиту (входит по URL дока); boards — гостем
+                    cookies = _rekey_cookies(acc.cookies, volga_url)
+            if transports:
+                accounts.bind(short_uuid, acc.id)
+            else:
+                accounts.release(acc.id)  # ничего не создалось — вернём ёмкость
+                acc = None
+        if acc is None:
+            for t in _doc_transports():
+                if t["type"] not in want or not _doc_ok(t["type"], t["url"]):
+                    continue
+                transports.append(t)
+                if t["type"] == "vyandex" and _yandex_cookies():
+                    try:
+                        cookies = _rekey_cookies(_yandex_cookies(), t["url"])
+                    except ValueError:
+                        print("[provision] OPENFLUX_YANDEX_COOKIES — не base64 cookie-store, volga без входа", flush=True)
+    for typ in ("cupsonline", "avito"):
+        if typ in want:
+            rooms = await _make_rooms(typ)
+            if _ROOMS_OK.fullmatch(rooms):
+                transports.append({"type": typ, "url": rooms})
+            elif rooms:
+                print(f"[provision] {typ}: визард вернул не список комнат — канал без него", flush=True)
     if not DIRECT and not transports:
-        # без direct такой канал никуда не ведёт: ни доска, ни волга не создались
-        raise RuntimeError("без direct каналу нужен хоть один носитель, а доска и волга не создались "
-                           "(пул аккаунтов пуст? причина — в строках [provision] выше)")
+        # без direct такой канал никуда не ведёт: ни один носитель не создался
+        raise RuntimeError(f"без direct каналу нужен хоть один носитель, а не создался ни один из выбранных "
+                           f"({', '.join(want) or 'ничего не выбрано'}; причина — в строках [provision] выше)")
+    present = {t["type"] for t in transports} | ({"direct"} if DIRECT else set())
+    prios = {t: n for t, n in prios.items() if t in present}  # в node.conf и ссылку — только свои
     mix = "+".join([t["type"] for t in transports] + (["direct"] if DIRECT else []))
     order = ",".join(f"{t}:{n}" for t, n in sorted(prios.items(), key=lambda kv: -kv[1]))
     print(f"[provision] {short_uuid}: канал {channel} = {mix}, режим {NODE_MODE}, приоритеты {order}, {where}", flush=True)

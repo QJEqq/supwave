@@ -248,6 +248,25 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .cmd code { flex: 1; min-width: 0; background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; overflow-wrap: anywhere; }
 .note { background: var(--wash); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: var(--ink-2); margin: 10px 0 0; }
 
+/* ползунки носителей */
+.swlist { display: grid; gap: 2px; margin: 4px 0 6px; }
+.sw { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 7px 0; cursor: pointer; }
+.sw input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.sw .knob { flex: none; position: relative; width: 36px; height: 20px; margin-top: 1px; border-radius: 999px;
+  background: color-mix(in srgb, var(--ink-2) 28%, transparent); transition: background .15s; }
+.sw .knob::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+.sw input:checked + .knob { background: var(--accent); }
+.sw input:checked + .knob::after { transform: translateX(16px); }
+.sw input:focus-visible + .knob { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sw.dis { cursor: not-allowed; opacity: .5; }
+.sw .what { display: grid; gap: 1px; }
+.sw .what b { font-weight: 600; }
+.sw .what small { color: var(--ink-2); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .sw .knob, .sw .knob::after { transition: none; } }
+button.pill { font: inherit; font-size: 12px; cursor: pointer; }
+button.pill:hover { background: color-mix(in srgb, var(--h) 22%, transparent); }
+
 /* всплывашка */
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--page);
   padding: 9px 14px; border-radius: 10px; font-size: 13px; max-width: calc(100vw - 32px); box-shadow: 0 4px 16px rgba(0,0,0,.2); z-index: 10; }
@@ -303,7 +322,15 @@ const KEY = 'augmenter.token';
 // API — под тем же префиксом, что и страница (/admin/ или ADMIN_PREFIX на домене панели).
 const BASE = location.pathname.replace(/\/+$/, '');
 const S = { token: '', summary: null, nodes: null, channels: null, accounts: null, log: [], logFilter: '', tab: 'nodes', busy: new Set() };
-const NAMES = { boards: 'доска', vyandex: 'волга', direct: 'direct' };
+const NAMES = { boards: 'доска', vyandex: 'волга', cupsonline: 'cups', avito: 'авито', direct: 'direct' };
+// Носители, которые можно включать каналу (порядок — как в settings.CARRIERS): подпись и чем платим.
+const CARRIERS = [
+  ['boards', 'доска', 'Яндекс Доски · ~80 КБ/с · доска на аккаунте пула'],
+  ['vyandex', 'волга', 'Яндекс Документы · 4–6 КБ/с · документ и вход аккаунта пула'],
+  ['cupsonline', 'cups', 'cups.online · ~70 КБ/с · анонимные комнаты; лимит сервиса — на адрес ноды, общий для её каналов'],
+  ['avito', 'авито', 'Avito Code · ~24 КБ/с · анонимные комнаты; запасной, самый медленный из анонимных'],
+];
+const carrierNames = (list) => (list || []).map((x) => NAMES[x] || x).join(' · ');
 const $ = (sel) => document.querySelector(sel);
 
 function el(tag, attrs, ...kids) {
@@ -430,7 +457,11 @@ function changed(name, data) {
 function drawTop() { if (changed('top', [S.summary, S.nodes && S.nodes.map((n) => n.status)])) renderTop(); }
 async function loadSummary() { S.summary = await call('GET', BASE + '/summary'); drawTop(); }
 async function loadNodes() { S.nodes = (await call('GET', BASE + '/nodes')).nodes; drawTop(); if (S.tab === 'nodes' && changed('nodes', S.nodes)) renderNodes(); }
-async function loadChannels() { S.channels = (await call('GET', BASE + '/channels')).channels; if (S.tab === 'channels' && changed('channels', [S.channels, [...S.busy]])) renderChannels(); }
+async function loadChannels() {
+  const r = await call('GET', BASE + '/channels');
+  S.channels = r.channels; S.defaultCarriers = r.default_carriers || [];
+  if (S.tab === 'channels' && changed('channels', [S.channels, S.defaultCarriers, [...S.busy]])) renderChannels();
+}
 async function loadPool() { S.accounts = (await call('GET', BASE + '/accounts')).accounts; if (S.tab === 'pool' && changed('pool', S.accounts)) renderPool(); }
 async function loadLog() { S.log = (await call('GET', BASE + '/log?n=500')).lines; if (S.tab === 'log') renderLog(); }
 async function loadSettings() { S.settings = await call('GET', BASE + '/settings'); if (S.tab === 'settings') renderSettings(); }
@@ -683,7 +714,7 @@ function renderChannels() {
   const body = !S.channels.length
     ? el('div', { class: 'empty' }, 'Каналов пока нет.')
     : el('div', { class: 'tablewrap' }, el('table', {},
-        el('thead', {}, el('tr', {}, ['Юзер (shortUuid)', 'Канал', 'Нода', 'Аккаунт', 'Состояние', 'Носитель', 'Трафик', 'Клиент', 'Вход', 'Ядро', ''].map((t) => el('th', { scope: 'col' }, t)))),
+        el('thead', {}, el('tr', {}, ['Юзер (shortUuid)', 'Канал', 'Нода', 'Аккаунт', 'Носители', 'Состояние', 'Носитель', 'Трафик', 'Клиент', 'Вход', 'Ядро', ''].map((t) => el('th', { scope: 'col' }, t)))),
         el('tbody', {}, S.channels.map((c) => {
           const link = el('button', { class: 'btn small', type: 'button' }, 'ссылка');
           link.addEventListener('click', async () => {
@@ -698,6 +729,7 @@ function renderChannels() {
             el('td', {}, pill(c.channel, 'c2 mono')),
             el('td', {}, c.node ? pill(c.node, 'c3') : pill('—', 'muted')),
             el('td', {}, c.account ? pill(c.account, 'c4') : pill('общий из env', 'muted')),
+            el('td', {}, carriersCell(c, busy)),
             el('td', {}, stateCell(c)),
             el('td', {}, carrierCell(c)),
             el('td', {}, trafficCell(c)),
@@ -710,20 +742,95 @@ function renderChannels() {
 }
 async function reprovision(c) {
   const ok = await confirmBox('Пересоздать канал ' + c.short_uuid + '?',
-    'Канал снимется с ноды и заведётся заново: новые доска и документ, новый ключ. У юзера сменится ссылка — подтянется со следующим обновлением подписки.', 'Пересоздать');
+    'Канал снимется с ноды и заведётся заново: новые доска, документ и комнаты, новый ключ. У юзера сменится ссылка — подтянется со следующим обновлением подписки.', 'Пересоздать');
   if (!ok) return;
+  try { await call('POST', BASE + '/channels/' + encodeURIComponent(c.short_uuid) + '/reprovision'); }
+  catch (e) { return fail(e); }
+  toast('Пересоздаю канал ' + c.short_uuid, 'good');
+  await watchBusy(c.short_uuid);
+}
+// Ждём, пока канал заведётся заново (строки нет или она занята — ещё заводится).
+async function watchBusy(su) {
+  S.busy.add(su); if (S.tab === 'channels') renderChannels();
   try {
-    await call('POST', BASE + '/channels/' + encodeURIComponent(c.short_uuid) + '/reprovision');
-    S.busy.add(c.short_uuid); renderChannels();
-    toast('Пересоздаю канал ' + c.short_uuid, 'good');
     for (let i = 0; i < 80; i++) {
       await new Promise((res) => setTimeout(res, 3000));
       await loadChannels();
-      const row = (S.channels || []).find((x) => x.short_uuid === c.short_uuid);
-      if (row && !row.busy) break;  // пока строки нет или она занята — канал ещё заводится
+      const row = (S.channels || []).find((x) => x.short_uuid === su);
+      if (row && !row.busy) break;
     }
   } catch (e) { fail(e); }
-  finally { S.busy.delete(c.short_uuid); if (S.tab === 'channels') renderChannels(); loadSummary().catch(() => {}); }
+  finally { S.busy.delete(su); if (S.tab === 'channels') renderChannels(); loadSummary().catch(() => {}); }
+}
+
+// ---- носители канала (ползунки) -------------------------------------------------
+function carrierSwitches(selected, onchange) {
+  const boxes = {};
+  const rows = CARRIERS.map(([id, name, note]) => {
+    const cb = el('input', { type: 'checkbox', role: 'switch', value: id });
+    cb.checked = selected.includes(id);
+    if (onchange) cb.addEventListener('change', onchange);
+    boxes[id] = cb;
+    return el('label', { class: 'sw' }, cb, el('span', { class: 'knob', 'aria-hidden': 'true' }),
+      el('span', { class: 'what' }, el('b', {}, name), el('small', {}, note)));
+  });
+  return {
+    node: el('div', { class: 'swlist' }, rows),
+    picked: () => CARRIERS.map(([id]) => id).filter((id) => boxes[id].checked),
+    set: (list) => { for (const [id, cb] of Object.entries(boxes)) cb.checked = list.includes(id); },
+    disable: (v) => { for (const cb of Object.values(boxes)) { cb.disabled = v; cb.closest('.sw').classList.toggle('dis', v); } },
+  };
+}
+const sameList = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
+function carriersCell(c, busy) {
+  if (!c.carriers) return pill('—', 'muted', 'ссылка канала не разобралась');
+  const want = c.own_carriers || S.defaultCarriers || [];
+  const lines = ['В канале: ' + (carrierNames(c.carriers) || 'только direct'),
+    c.own_carriers ? 'Свои носители канала: ' + (carrierNames(c.own_carriers) || 'только direct') : 'Носители по умолчанию: ' + (carrierNames(want) || 'только direct')];
+  if (!sameList(want, c.carriers)) lines.push('Выбрано не то, что в канале (носитель не создался или поменялся выбор) — применить: пересоздать с выбранными');
+  lines.push('Нажми — включить или выключить носители');
+  return el('button', { class: 'pill ' + (c.own_carriers ? 'c2' : 'c3'), type: 'button', disabled: busy, title: lines.join('\n'),
+    'aria-label': 'Носители канала ' + c.short_uuid + ': ' + (carrierNames(c.carriers) || 'только direct'), onclick: () => editCarriers(c) },
+    (carrierNames(c.carriers) || 'только direct') + (sameList(want, c.carriers) ? '' : ' ≠') + (c.own_carriers ? ' · свои' : ''), el('span', { 'aria-hidden': 'true' }, '✎'));
+}
+function editCarriers(c) {
+  const def = S.defaultCarriers || [];
+  const cur = c.carriers || [];
+  const direct = S.summary ? S.summary.direct : false;
+  const useDef = el('input', { type: 'checkbox' });
+  useDef.checked = c.own_carriers == null;
+  const apply = el('button', { class: 'btn primary', type: 'button' }, 'Пересоздать с ними');
+  const note = el('p', { class: 'note' });
+  const update = () => {
+    if (useDef.checked) sw.set(def);
+    sw.disable(useDef.checked);
+    const want = useDef.checked ? def : sw.picked();
+    const own = useDef.checked ? null : want;
+    const nothing = (own == null) === (c.own_carriers == null) && sameList(own, c.own_carriers) && sameList(want, cur);
+    apply.disabled = nothing || (!want.length && !direct);
+    note.textContent = !want.length && !direct ? 'Без direct каналу нужен хоть один носитель.'
+      : nothing ? 'Канал уже такой.'
+      : 'Канал пересоздастся с: ' + (carrierNames(want) || 'только direct') + '. Новые доска / документ / комнаты и новый ключ — ссылка у юзера сменится со следующим обновлением подписки.' +
+        (want.some((x) => x === 'cupsonline' || x === 'avito') ? ' cups и Авито лучше всего работают со свежим ядром на ноде и в приложении (фиксы от 17.11).' : '');
+  };
+  const sw = carrierSwitches(c.own_carriers || def, update);
+  useDef.addEventListener('change', update);
+  update();
+  apply.addEventListener('click', async () => {
+    apply.disabled = true;
+    try {
+      await call('PUT', BASE + '/channels/' + encodeURIComponent(c.short_uuid) + '/carriers', { carriers: useDef.checked ? null : sw.picked() });
+    } catch (e) { update(); return fail(e); }
+    $('#dlg').close();
+    toast('Пересоздаю канал ' + c.short_uuid + ' с новыми носителями', 'good');
+    await watchBusy(c.short_uuid);
+  });
+  openDialog('Носители канала ' + c.short_uuid, [
+    el('p', { class: 'hint', style: 'margin-top:0' }, 'Сейчас в канале: ' + (carrierNames(cur) || 'только direct') +
+      '. Трафик идёт по живому носителю с наивысшим приоритетом, остальные — запасные.'),
+    el('label', { class: 'check' }, useDef, 'Как по умолчанию: ' + (carrierNames(def) || 'только direct') + ' (меняется в «Настройках»)'),
+    sw.node, note],
+    [el('button', { class: 'btn', type: 'button', onclick: () => $('#dlg').close() }, 'Отмена'), apply]);
 }
 
 // ---- пул ---------------------------------------------------------------------
@@ -825,7 +932,7 @@ function renderSettings() {
   const box = $('#tab-settings');
   const st = S.settings;
   if (!st) { box.replaceChildren(el('div', { class: 'bar' }, el('h2', {}, 'Настройки')), el('p', { class: 'muted' }, 'Загружаю…')); return; }
-  box.replaceChildren(el('div', { class: 'bar' }, el('h2', {}, 'Настройки')), squadsBlock(st), nameBlock(st), uaBlock(st));
+  box.replaceChildren(el('div', { class: 'bar' }, el('h2', {}, 'Настройки')), squadsBlock(st), carriersBlock(st), nameBlock(st), uaBlock(st));
   if (!S.squads && !S.squadsLoading && !S.squadsError) loadSquads();
 }
 async function loadSquads() {
@@ -896,6 +1003,25 @@ function nameBlock(st) {
     el('p', { class: 'hint' }, 'Так профиль обхода называется в приложении. {node} — имя ноды канала. Меняется сразу у всех: имя переписывается в ссылке при выдаче подписки, каналы не пересоздаются.'),
     el('label', { class: 'f' }, el('span', {}, 'Имя'), input),
     el('div', { class: 'bar' }, el('span', { class: 'muted' }, 'В приложении будет:'), preview), el('div', { class: 'bar' }, save));
+}
+function carriersBlock(st) {
+  const cur = (st.carriers && st.carriers.carriers) || [];
+  const save = el('button', { class: 'btn primary', type: 'button' }, 'Сохранить');
+  const sw = carrierSwitches(cur, () => { save.disabled = !sw.picked().length && !st.direct; });
+  save.addEventListener('click', async () => {
+    try {
+      S.settings = await call('PUT', BASE + '/settings', { carriers: sw.picked() });
+      toast('Носители новых каналов сохранены', 'good'); renderSettings();
+    } catch (e) { fail(e); }
+  });
+  const prios = S.summary && S.summary.priorities ? Object.entries(S.summary.priorities).filter(([k]) => k !== 'error')
+    .sort((a, b) => b[1] - a[1]).map(([k]) => NAMES[k] || k).join(' → ') : '';
+  return el('div', { class: 'set' },
+    el('h3', {}, 'Носители новых каналов'),
+    el('p', { class: 'hint' }, 'С какими носителями заводить канал юзеру. Заведённые каналы не меняются — им носители включают в «Каналах» (кнопка в столбце «Носители», канал пересоздастся). ' +
+      (prios ? 'Везёт живой носитель с наивысшим приоритетом: ' + prios + '. ' : '') +
+      (st.carriers && st.carriers.from === 'env' ? 'Сейчас — из .env (OPENFLUX_CARRIERS).' : '')),
+    sw.node, el('div', { class: 'bar' }, save));
 }
 function uaBlock(st) {
   let list = st.ua_markers.slice();

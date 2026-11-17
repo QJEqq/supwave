@@ -341,6 +341,7 @@ async def admin_channels(request: Request):
             return n.id, None  # нода не ответила: состояние неизвестно
 
     live = dict(await asyncio.gather(*(on_node(n) for n in node_by_id.values())))
+    own = settings.channel_overrides()
     rows = []
     # пересоздаваемый на миг пропадает из склада — показываем его всё равно (busy)
     for su in sorted(store.keys() | _REPROVISIONING):
@@ -365,8 +366,10 @@ async def admin_channels(request: Request):
             # оператора на документах, CPU/память ядра, когда оно запущено
             "stats": (st or {}).get("stats"), "signin": (st or {}).get("signin") or [],
             "cpu": (st or {}).get("cpu"), "rss": (st or {}).get("rss"), "since": (st or {}).get("since"),
+            # носители: что в ссылке канала сейчас, что выбрано ему в морде (None — по умолчанию)
+            "carriers": _link_carriers(store.get(su)), "own_carriers": own.get(su),
         })
-    return {"channels": rows}
+    return {"channels": rows, "default_carriers": settings.carriers()["carriers"]}
 
 
 @app.get(ADMIN_PREFIX + "/channels/{short_uuid}/log")
@@ -422,6 +425,43 @@ async def admin_channel_reprovision(short_uuid: str, request: Request):
     return {"ok": True, "busy": reconcile.LOCK.locked()}
 
 
+def _carriers_body(body) -> list[str]:
+    """Тело {carriers: [тип, …]} → список носителей (хоть один, если direct выключен)."""
+    raw = body.get("carriers") if isinstance(body, dict) else None
+    if not isinstance(raw, list) or not all(isinstance(c, str) for c in raw):
+        raise HTTPException(status_code=400, detail="carriers: список из " + ", ".join(settings.CARRIERS))
+    bad = [c for c in raw if c not in settings.CARRIERS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"неизвестный носитель: {bad[0][:20]!r}")
+    out = settings.clean_carriers(raw)
+    if not out and not provisioner.DIRECT:
+        raise HTTPException(status_code=400, detail="без direct каналу нужен хоть один носитель")
+    return out
+
+
+@app.put(ADMIN_PREFIX + "/channels/{short_uuid}/carriers")
+async def admin_channel_carriers(short_uuid: str, request: Request):
+    """Свои носители канала: {carriers: [boards|vyandex|cupsonline|avito, …]} или
+    {carriers: null} — как по умолчанию. Канал пересоздаётся с ними (новая ссылка
+    уйдёт юзеру со следующей подпиской)."""
+    if not _admin_ok(request):
+        return Response(status_code=404)
+    if short_uuid not in store.keys():
+        raise HTTPException(status_code=404, detail="нет такого канала")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="тело — JSON")
+    own = None if isinstance(body, dict) and body.get("carriers") is None else _carriers_body(body)
+    if short_uuid in _REPROVISIONING:
+        raise HTTPException(status_code=409, detail="канал уже пересоздаётся — дождись")
+    settings.set_channel_carriers(short_uuid, own)
+    print(f"[admin] {short_uuid}: носители — " + (", ".join(own) if own is not None else "по умолчанию"), flush=True)
+    _REPROVISIONING.add(short_uuid)
+    _spawn(_reprovision(short_uuid), f"{short_uuid}: не пересоздался")
+    return {"ok": True, "carriers": settings.carriers_for(short_uuid), "own": own, "busy": reconcile.LOCK.locked()}
+
+
 @app.post(ADMIN_PREFIX + "/reconcile")
 async def admin_reconcile(request: Request):
     """Сверить сейчас, не дожидаясь RECONCILE_INTERVAL."""
@@ -441,7 +481,9 @@ async def admin_settings(request: Request):
     if not _admin_ok(request):
         return Response(status_code=404)
     return {"squads": settings.squads(), "link_name": settings.link_name(), "ua_markers": settings.ua_markers(),
-            "env": {"squads": settings.ENV_SQUADS, "link_name": settings.ENV_LINK_NAME, "ua_markers": settings.ENV_UA}}
+            "carriers": settings.carriers(), "carrier_types": list(settings.CARRIERS), "direct": provisioner.DIRECT,
+            "env": {"squads": settings.ENV_SQUADS, "link_name": settings.ENV_LINK_NAME, "ua_markers": settings.ENV_UA,
+                    "carriers": settings.ENV_CARRIERS}}
 
 
 _PRINTABLE = re.compile(r"[^\x00-\x1f\x7f]+")
@@ -457,7 +499,8 @@ def _text(v, what: str, lo: int, hi: int) -> str:
 @app.put(ADMIN_PREFIX + "/settings")
 async def admin_settings_put(request: Request):
     """Сохранить, что пришло: squads {mode: all|squads, squads: [uuid], names: [имя]},
-    link_name (шаблон, {node} — имя ноды), ua_markers [метка]."""
+    link_name (шаблон, {node} — имя ноды), ua_markers [метка], carriers [носитель]
+    (носители новых каналов; заведённые каналы не трогаются)."""
     if not _admin_ok(request):
         return Response(status_code=404)
     try:
@@ -485,6 +528,10 @@ async def admin_settings_put(request: Request):
         markers = list(dict.fromkeys(_text(m, "метка клиента", 2, 64) for m in raw))[:20]
         settings.set_ua_markers(markers)
         done.append("клиенты: " + (", ".join(markers) or "никто"))
+    if "carriers" in body:
+        carriers = _carriers_body(body)
+        settings.set_carriers(carriers)
+        done.append("носители новых каналов: " + (", ".join(carriers) or "только direct"))
     if done:
         print("[admin] настройки: " + "; ".join(done), flush=True)
     return await admin_settings(request)
@@ -620,19 +667,36 @@ def _rename_link(link: str, name: str) -> str:
     """Имя профиля в openflux-ссылке. Ссылка — openflux://v1/ + base64url(raw
     DEFLATE(JSON конфига)), имя — поле "name" внутри; остальное (ключ, носители,
     контекст) не трогаем. Не разобралось — отдаём как было."""
-    if not name or not link.startswith(_LINK_PREFIX):
+    if not name:
         return link
-    body = link[len(_LINK_PREFIX):]
-    try:
-        cfg = json.loads(zlib.decompress(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)), -15))
-    except (ValueError, zlib.error):
-        return link
-    if not isinstance(cfg, dict) or cfg.get("name") == name:
+    cfg = _link_cfg(link)
+    if cfg is None or cfg.get("name") == name:
         return link
     cfg["name"] = name
     z = zlib.compressobj(9, zlib.DEFLATED, -15)
     packed = z.compress(json.dumps(cfg, ensure_ascii=False, separators=(",", ":")).encode()) + z.flush()
     return _LINK_PREFIX + base64.urlsafe_b64encode(packed).decode().rstrip("=")
+
+
+def _link_cfg(link: str | None) -> dict | None:
+    """JSON конфига openflux-ссылки; None — не openflux://v1/ или не разобралось."""
+    if not link or not link.startswith(_LINK_PREFIX):
+        return None
+    body = link[len(_LINK_PREFIX):]
+    try:
+        cfg = json.loads(zlib.decompress(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)), -15))
+    except (ValueError, zlib.error):
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
+def _link_carriers(link: str | None) -> list[str] | None:
+    """Типы носителей в ссылке канала (без direct); None — ссылка не разобралась."""
+    cfg = _link_cfg(link)
+    if cfg is None:
+        return None
+    types = {t.get("type") for t in cfg.get("transports") or [] if isinstance(t, dict)}
+    return [c for c in settings.CARRIERS if c in types] + sorted(t for t in types if t and t != "direct" and t not in settings.CARRIERS)
 
 
 def _named(link: str, short_uuid: str) -> str:
