@@ -1,12 +1,10 @@
-<p align="center"><img src="brand/supwave-leopard.svg" width="120" alt="Supwave"></p>
-
-<h1 align="center">Supwave</h1>
+<p align="center"><img src="brand/supwave-banner.png" alt="Supwave — multi-transport integration для Remnawave"></p>
 
 Supwave — дополнение к [Remnawave](https://github.com/remnawave): каждому юзеру из
 выбранных сквадов — свой канал-обход [OpenFlux](https://github.com/p1neappleXpress/OpenFlux)
 через Яндекс Доски и Яндекс Документы. Канал сам появляется в обычной подписке юзера —
-у клиентов, которые понимают `openflux://` (AVACA, Rawline). Остальным клиентам подписка
-отдаётся без изменений.
+в клиенте Avaca, который понимает `openflux://`. Остальным клиентам подписка отдаётся
+без изменений.
 
 Клиент ходит только к Яндексу, нода — тоже. К IP ноды клиент не подключается, и для
 клиентов на ноде не открыто ни одного порта: блокировка IP или подсети ноды канал не
@@ -28,7 +26,7 @@ Supwave — дополнение к [Remnawave](https://github.com/remnawave): �
 ## Как устроено
 
 ```
-Клиент (AVACA, Rawline) ──подписка──► Caddy (subs.) ──► Supwave ──► Remnawave API
+Клиент (Avaca) ───────────подписка──► Caddy (subs.) ──► Supwave ──► Remnawave API
           │                                               │  сверка: кому завести канал,
           │                                               │  у кого снять
           │                                               │  HTTPS, закреплённый сертификат,
@@ -51,7 +49,7 @@ Supwave — дополнение к [Remnawave](https://github.com/remnawave): �
   `remnawave-network`.
 - Сервер под ноду за пределами РФ: Linux **amd64**, Docker.
 - Аккаунт Яндекса (лучше несколько) и его `cookies.txt`: на нём создаются доски и документы.
-- Клиент с поддержкой `openflux://` — AVACA или Rawline.
+- Клиент Avaca (Android): он понимает `openflux://` и шлёт метку `AVACA-Pod`.
 
 ## Установка
 
@@ -83,7 +81,7 @@ https://subs.example.com {
     # Через Supwave — только клиенты с меткой из «Настроек → Клиенты». Happ, браузер и
     # прочие идут прямо к странице подписки: Supwave им ничего не дописывает, и любая его
     # беда их не касается.
-    @supwave header_regexp User-Agent (AVACA-Pod|Rawline)
+    @supwave header_regexp User-Agent AVACA-Pod
     handle @supwave {
         # Supwave упал — Caddy сам отдаёт обычную подписку Remnawave (без openflux)
         reverse_proxy http://augmenter:8080 http://remnawave-subscription-page:3010 {
@@ -148,8 +146,8 @@ cd /opt/openflux-node && docker compose up -d
 «Настройки»:
 - **Кому openflux** — отметь сквады Remnawave (или «всем активным»). Пока не выбрано —
   openflux никому.
-- **Клиенты** — метки User-Agent: по умолчанию `AVACA-Pod` и `Rawline`. Голую `Happ` не
-  добавляй: тогда openflux получат все Happ.
+- **Клиенты** — метки User-Agent: по умолчанию `AVACA-Pod` (её шлёт Avaca). Голую `Happ`
+  не добавляй: тогда openflux получат все Happ.
 - **Имя в подписке** — как профиль называется в приложении (`{node}` — имя ноды).
 
 Нажми «Сверить сейчас» — каналы заведутся, и в подписке клиентов появится `openflux://`.
@@ -235,7 +233,7 @@ sh node-kit/publish.sh <логин>/openflux-node
 |---|---|
 | `augmenter/` | Supwave: `app.py` (подписка, API), `admin_ui.py` (веб-морда), `reconcile.py` (сверка), `provisioner.py` (заведение каналов), `nodes.py`/`nodeapi.py` (ноды), `accounts.py` (пул), `settings.py` (настройки морды), `remnawave.py`, `tools/` |
 | `node-kit/` | образ ноды из готовых бинарей: `Dockerfile.bin`, `publish.sh`, шаблон compose |
-| `brand/` | логотип |
+| `brand/` | логотип и баннер |
 
 ## Лицензия
 

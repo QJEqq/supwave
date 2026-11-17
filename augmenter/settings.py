@@ -21,8 +21,8 @@ _cache: dict = {}  # пишет только этот процесс — кэш 
 ENV_SQUADS = [s.strip() for s in os.getenv("TARGET_SQUADS", "").split(",") if s.strip()]
 ENV_LINK_NAME = os.getenv("OPENFLUX_LINK_NAME", "").strip()
 # Метки клиентов: openflux дописывается, только если User-Agent содержит одну из них.
-# "Rawline" — клиент «Happ/3.0 RawlineMobile/…»; голый Happ её не несёт и openflux не получит.
-ENV_UA = [m.strip() for m in os.getenv("POD_UA_MARKER", "AVACA-Pod,Rawline").split(",") if m.strip()]
+# По умолчанию — Avaca: её User-Agent «Avaca/… (Android …) AVACA-Pod».
+ENV_UA = [m.strip() for m in os.getenv("POD_UA_MARKER", "AVACA-Pod").split(",") if m.strip()]
 
 
 def _get(key: str):

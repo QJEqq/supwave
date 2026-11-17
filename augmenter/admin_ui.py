@@ -906,7 +906,7 @@ function uaBlock(st) {
     return el('span', { class: 'cellrow' }, pill(m, 'c2 mono'), x);
   }) : [el('span', { class: 'muted' }, 'никому — openflux не получит ни один клиент')]));
   draw();
-  const input = el('input', { type: 'text', maxlength: '64', placeholder: 'например Rawline', spellcheck: 'false' });
+  const input = el('input', { type: 'text', maxlength: '64', placeholder: 'метка из User-Agent', spellcheck: 'false' });
   const add = el('button', { class: 'btn', type: 'button' }, 'Добавить');
   add.addEventListener('click', async () => {
     const v = input.value.trim();
@@ -925,7 +925,7 @@ function uaBlock(st) {
   });
   return el('div', { class: 'set' },
     el('h3', {}, 'Клиенты, которым дописывать openflux'),
-    el('p', { class: 'hint' }, 'openflux попадает в подписку, только если User-Agent приложения содержит одну из меток (с учётом регистра). Остальные — обычный Happ, v2rayNG, браузер — получают подписку как есть. Rawline шлёт «Happ/3.0 RawlineMobile/1.1.1 (Android)», поэтому метка — «Rawline», а не «Happ».'),
+    el('p', { class: 'hint' }, 'openflux попадает в подписку, только если User-Agent приложения содержит одну из меток (с учётом регистра). Остальные — обычный Happ, v2rayNG, браузер — получают подписку как есть. Avaca шлёт «Avaca/… (Android …) AVACA-Pod», её метка — «AVACA-Pod».'),
     pills, el('div', { class: 'bar' }, input, add), el('div', { class: 'bar' }, save));
 }
 
