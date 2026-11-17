@@ -1,3 +1,5 @@
+<p align="center"><img src="brand/supwave-leopard.svg" width="120" alt="Supwave"></p>
+
 <p align="center"><img src="brand/supwave-banner.png" alt="Supwave — multi-transport integration для Remnawave"></p>
 
 Supwave — дополнение к [Remnawave](https://github.com/remnawave): каждому юзеру из
