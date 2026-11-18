@@ -6,12 +6,22 @@ Supwave — дополнение к [Remnawave](https://github.com/remnawave): �
 выбранных сквадов — свой канал-обход [OpenFlux](https://github.com/p1neappleXpress/OpenFlux)
 через Яндекс Доски и Яндекс Документы, по желанию — ещё через комнаты cups.online и Avito
 Code. Канал сам появляется в обычной подписке юзера —
-в клиенте Avaca, который понимает `openflux://`. Остальным клиентам подписка отдаётся
-без изменений.
+в клиенте [Avaca](https://github.com/QJEqq/avaca), который понимает `openflux://`.
+Остальным клиентам подписка отдаётся без изменений.
 
 Клиент ходит только к сервисам носителей (Яндекс, а если включены — cups.online и Авито),
 нода — тоже. К IP ноды клиент не подключается, и для клиентов на ноде не открыто ни одного
 порта: блокировка IP или подсети ноды канал не задевает, а домены Яндекса — в белых списках.
+
+## Клиенты
+
+Канал получает клиент, который понимает `openflux://` и шлёт метку в User-Agent; остальные
+клиенты получают обычную подписку Remnawave.
+
+| Платформа | Клиент | Где взять |
+|:---|:---:|:---|
+| **Android** 8.0+ | <img src="brand/avaca.png" width="48" alt="Avaca"><br>[**Avaca**](https://github.com/QJEqq/avaca) | [релизы на GitHub](https://github.com/QJEqq/avaca/releases/latest) |
+| **iOS** | — | пока нет |
 
 ## Что умеет
 
@@ -59,7 +69,7 @@ Code. Канал сам появляется в обычной подписке 
   `remnawave-network`.
 - Сервер под ноду за пределами РФ: Linux **amd64**, Docker.
 - Аккаунт Яндекса (лучше несколько) и его `cookies.txt`: на нём создаются доски и документы.
-- Клиент Avaca (Android): он понимает `openflux://` и шлёт метку `AVACA-Pod`.
+- Клиент [Avaca](https://github.com/QJEqq/avaca) (Android): он понимает `openflux://` и шлёт метку `AVACA-Pod`.
 
 ## Установка
 
@@ -256,7 +266,7 @@ sh node-kit/publish.sh <логин>/openflux-node
 |---|---|
 | `augmenter/` | Supwave: `app.py` (подписка, API), `admin_ui.py` (веб-морда), `reconcile.py` (сверка), `provisioner.py` (заведение каналов), `nodes.py`/`nodeapi.py` (ноды), `accounts.py` (пул), `settings.py` (настройки морды), `remnawave.py`, `tools/` |
 | `node-kit/` | образ ноды из готовых бинарей: `Dockerfile.bin`, `publish.sh`, шаблон compose |
-| `brand/` | логотип и баннер |
+| `brand/` | логотип и баннер Supwave, иконка Avaca |
 
 ## Лицензия
 
