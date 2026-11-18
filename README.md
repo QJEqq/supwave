@@ -131,6 +131,15 @@ docker exec caddy caddy validate --config /etc/caddy/Caddyfile && docker exec ca
 добавь его в «Пул аккаунтов → Добавить аккаунт». Один аккаунт держит до 40 каналов
 (`POOL_MAX_DOCS_PER_ACCOUNT`) — для многих юзеров добавь несколько.
 
+Выгружай с открытой вкладки `yandex.ru` или `boards.yandex.ru`, войдя именно в этот аккаунт:
+вход только через `ya.ru` оставляет куки на `.ya.ru`, и доски не создаются
+(`createBoard: … init-csrf: код 201`). Проверить вход всех аккаунтов пула (значения кук не
+печатаются, ничего не создаётся):
+
+```bash
+cd /opt/supwave/augmenter && docker exec -i augmenter python - < tools/pool_check.py
+```
+
 ### 5. Нода
 
 «Ноды → Добавить ноду» → имя и IP. Морда покажет compose и команды — на ноде:
